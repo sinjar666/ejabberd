@@ -1,6 +1,6 @@
 %%%-------------------------------------------------------------------
 %%% @author Evgeniy Khramtsov <ekhramtsov@process-one.net>
-%%% @copyright (C) 2013, Evgeniy Khramtsov
+%%% @copyright (C) 2002-2015, ProcessOne
 %%% @doc
 %%%
 %%% @end
@@ -25,7 +25,7 @@
 -include("suite.hrl").
 
 suite() ->
-    [{timetrap, {seconds,20}}].
+    [{timetrap, {seconds,120}}].
 
 init_per_suite(Config) ->
     NewConfig = init_config(Config),
@@ -801,7 +801,7 @@ pubsub(Config) ->
                                       node = Node,
                                       jid = my_jid(Config)}}]}),
     ?recv2(
-       #message{sub_els = [#pubsub_event{}, #delay{}]},
+       #message{sub_els = [#pubsub_event{}, #delay{}, #legacy_delay{}]},
        #iq{type = result, id = I1}),
     %% Get subscriptions
     true = lists:member(?PUBSUB("retrieve-subscriptions"), Features),
@@ -1588,7 +1588,8 @@ client_state_slave(Config) ->
 	     body = [#text{data = <<"body">>}]} = recv(),
     wait_for_master(Config),
     send(Config, #csi{type = active}),
-    ?recv2(#presence{from = Peer, type = unavailable, sub_els = [#delay{}]},
+    ?recv2(#presence{from = Peer, type = unavailable,
+		     sub_els = [#delay{}, #legacy_delay{}]},
 	   #message{from = Peer, thread = <<"1">>,
 		    sub_els = [#chatstate{type = active}]}),
     disconnect(Config).

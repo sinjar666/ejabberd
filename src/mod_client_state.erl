@@ -5,7 +5,7 @@
 %%% Created : 11 Sep 2014 by Holger Weiss
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2014   ProcessOne
+%%% ejabberd, Copyright (C) 2014-2015   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -37,9 +37,13 @@
 
 start(Host, Opts) ->
     QueuePresence = gen_mod:get_opt(queue_presence, Opts,
-				    fun(true) -> true end, false),
+				    fun(true) -> true;
+				       (false) -> false
+				    end, false),
     DropChatStates = gen_mod:get_opt(drop_chat_states, Opts,
-				     fun(true) -> true end, false),
+				     fun(true) -> true;
+				        (false) -> false
+				     end, false),
     if QueuePresence; DropChatStates ->
 	   ejabberd_hooks:add(c2s_post_auth_features, Host, ?MODULE,
 			      add_stream_feature, 50),

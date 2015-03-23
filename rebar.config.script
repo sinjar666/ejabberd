@@ -6,6 +6,9 @@
 %%% @end
 %%% Created :  1 May 2013 by Evgeniy Khramtsov <ekhramtsov@process-one.net>
 %%%-------------------------------------------------------------------
+
+{require_min_otp_vsn, "16"}.
+
 Cfg = case file:consult("vars.config") of
           {ok, Terms} ->
               Terms;
@@ -24,6 +27,8 @@ Macros = lists:flatmap(
                    [{d, 'mssql'}];
               ({lager, true}) ->
                    [{d, 'LAGER'}];
+              ({erlang_deprecated_types, true}) ->
+                   [{d, 'ERL_DEPRECATED_TYPES'}];
               (_) ->
                    []
            end, Cfg),
@@ -90,17 +95,22 @@ CfgDeps = lists:flatmap(
                ({zlib, true}) ->
                     [{p1_zlib, ".*", {git, "git://github.com/processone/zlib"}}];
                ({riak, true}) ->
-                    [{riakc, ".*",
-		      {git, "git://github.com/basho/riak-erlang-client",
-		       {tag, "1.4.2"}}}];
+                    [{riakc, ".*", {git, "git://github.com/basho/riak-erlang-client", {tag, "1.4.2"}}}];
                ({json, true}) ->
                     [{jiffy, ".*", {git, "git://github.com/davisp/jiffy"}}];
+               ({elixir, true}) ->
+                    [{rebar_elixir_plugin, ".*", {git, "git://github.com/yrashk/rebar_elixir_plugin"}},
+                     {elixir, ".*", {git, "git://github.com/elixir-lang/elixir", {branch, "v1.0"}}}];
                ({iconv, true}) ->
                     [{p1_iconv, ".*", {git, "git://github.com/processone/eiconv"}}];
                ({lager, true}) ->
                     [{lager, ".*", {git, "git://github.com/basho/lager"}}];
                ({lager, false}) ->
                     [{p1_logger, ".*", {git, "git://github.com/processone/p1_logger"}}];
+               ({tools, true}) ->
+                    [{meck, "0.*", {git, "https://github.com/eproxus/meck"}}];
+	       ({redis, true}) ->
+		    [{eredis, ".*", {git, "git://github.com/wooga/eredis"}}];
                (_) ->
                     []
             end, Cfg),
@@ -142,6 +152,13 @@ CfgXrefs = lists:flatmap(
 		     []
             end, Cfg),
 
+ElixirConfig = case lists:keysearch(elixir, 1, Cfg) of
+                   {value, {elixir, true}} ->
+                       [{plugins, [rebar_elixir_compiler, rebar_exunit] },
+                        {lib_dirs, ["deps/elixir/lib"]}];
+                   _ ->
+                       []
+               end,
 
 {ok, Cwd} = file:get_cwd(),
 
@@ -157,7 +174,7 @@ Config = [{erl_opts, Macros ++ HiPE ++ DebugInfo ++
 	   [{"(XC - UC) || (XU - X - B - "
 	     ++ string:join(CfgXrefs, " - ") ++ ")", []}]},
           {post_hooks, PostHooks ++ CfgPostHooks},
-          {deps, Deps ++ CfgDeps}],
+          {deps, Deps ++ CfgDeps}] ++ ElixirConfig,
 %%io:format("ejabberd configuration:~n  ~p~n", [Config]),
 Config.
 
