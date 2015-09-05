@@ -17,10 +17,9 @@
 %%% MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 %%% General Public License for more details.
 %%%
-%%% You should have received a copy of the GNU General Public License
-%%% along with this program; if not, write to the Free Software
-%%% Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-%%% 02111-1307 USA
+%%% You should have received a copy of the GNU General Public License along
+%%% with this program; if not, write to the Free Software Foundation, Inc.,
+%%% 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 %%%
 %%%----------------------------------------------------------------------
 
@@ -28,8 +27,10 @@
 
 -behaviour(gen_mod).
 
+-protocol({xep, 191, '1.2'}).
+
 -export([start/2, stop/1, process_iq/3,
-	 process_iq_set/4, process_iq_get/5]).
+	 process_iq_set/4, process_iq_get/5, mod_opt_type/1]).
 
 -include("ejabberd.hrl").
 -include("logger.hrl").
@@ -449,3 +450,6 @@ process_blocklist_get(LUser, LServer, odbc) ->
 	  end;
       {'EXIT', _} -> error
     end.
+
+mod_opt_type(iqdisc) -> fun gen_iq_handler:check_type/1;
+mod_opt_type(_) -> [iqdisc].

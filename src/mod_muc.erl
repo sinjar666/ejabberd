@@ -27,6 +27,8 @@
 
 -author('alexey@process-one.net').
 
+-protocol({xep, 45, '1.25'}).
+
 -behaviour(gen_server).
 
 -behaviour(gen_mod).
@@ -48,9 +50,9 @@
          import/3,
 	 can_use_nick/4]).
 
-%% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2,
-	 handle_info/2, terminate/2, code_change/3]).
+	 handle_info/2, terminate/2, code_change/3,
+	 mod_opt_type/1]).
 
 -include("ejabberd.hrl").
 -include("logger.hrl").
@@ -113,7 +115,8 @@ shutdown_rooms(Host) ->
     Rooms = mnesia:dirty_select(muc_online_room,
 				[{#muc_online_room{name_host = '$1',
 						   pid = '$2'},
-				  [{'==', {element, 2, '$1'}, MyHost}],
+				  [{'==', {element, 2, '$1'}, MyHost},
+				   {'==', {node, '$2'}, node()}],
 				  ['$2']}]),
     [Pid ! shutdown || Pid <- Rooms],
     Rooms.
@@ -197,13 +200,16 @@ forget_room(ServerHost, Host, Name) ->
     forget_room(LServer, Host, Name,
 		gen_mod:db_type(LServer, ?MODULE)).
 
-forget_room(_LServer, Host, Name, mnesia) ->
+forget_room(LServer, Host, Name, mnesia) ->
+    remove_room_mam(LServer, Host, Name),
     F = fun () -> mnesia:delete({muc_room, {Name, Host}})
 	end,
     mnesia:transaction(F);
-forget_room(_LServer, Host, Name, riak) ->
+forget_room(LServer, Host, Name, riak) ->
+    remove_room_mam(LServer, Host, Name),
     {atomic, ejabberd_riak:delete(muc_room, {Name, Host})};
 forget_room(LServer, Host, Name, odbc) ->
+    remove_room_mam(LServer, Host, Name),
     SName = ejabberd_odbc:escape(Name),
     SHost = ejabberd_odbc:escape(Host),
     F = fun () ->
@@ -212,6 +218,22 @@ forget_room(LServer, Host, Name, odbc) ->
 					   <<"';">>])
 	end,
     ejabberd_odbc:sql_transaction(LServer, F).
+
+remove_room_mam(LServer, Host, Name) ->
+    case gen_mod:is_loaded(LServer, mod_mam) of
+	true ->
+	    U = jlib:nodeprep(Name),
+	    S = jlib:nameprep(Host),
+	    DBType = gen_mod:db_type(LServer, mod_mam),
+	    if DBType == odbc ->
+		    mod_mam:remove_user(jlib:jid_to_string({U, S, <<>>}),
+					LServer, DBType);
+	       true ->
+		    mod_mam:remove_user(U, S, DBType)
+	    end;
+	false ->
+	    ok
+    end.
 
 process_iq_disco_items(Host, From, To,
 		       #iq{lang = Lang} = IQ) ->
@@ -283,7 +305,7 @@ can_use_nick(LServer, Host, JID, Nick, odbc) ->
 init([Host, Opts]) ->
     MyHost = gen_mod:get_opt_host(Host, Opts,
 				  <<"conference.@HOST@">>),
-    case gen_mod:db_type(Opts) of
+    case gen_mod:db_type(Host, Opts) of
         mnesia ->
             mnesia:create_table(muc_room,
                                 [{disc_copies, [node()]},
@@ -305,13 +327,66 @@ init([Host, Opts]) ->
     catch ets:new(muc_online_users, [bag, named_table, public, {keypos, 2}]),
     clean_table_from_bad_node(node(), MyHost),
     mnesia:subscribe(system),
-    Access = gen_mod:get_opt(access, Opts, fun(A) -> A end, all),
-    AccessCreate = gen_mod:get_opt(access_create, Opts, fun(A) -> A end, all),
-    AccessAdmin = gen_mod:get_opt(access_admin, Opts, fun(A) -> A end, none),
-    AccessPersistent = gen_mod:get_opt(access_persistent, Opts, fun(A) -> A end, all),
-    HistorySize = gen_mod:get_opt(history_size, Opts, fun(A) -> A end, 20),
-    DefRoomOpts = gen_mod:get_opt(default_room_options, Opts, fun(A) -> A end, []),
-    RoomShaper = gen_mod:get_opt(room_shaper, Opts, fun(A) -> A end, none),
+    Access = gen_mod:get_opt(access, Opts,
+                             fun(A) when is_atom(A) -> A end, all),
+    AccessCreate = gen_mod:get_opt(access_create, Opts,
+                                   fun(A) when is_atom(A) -> A end, all),
+    AccessAdmin = gen_mod:get_opt(access_admin, Opts,
+                                  fun(A) when is_atom(A) -> A end,
+                                  none),
+    AccessPersistent = gen_mod:get_opt(access_persistent, Opts,
+				       fun(A) when is_atom(A) -> A end,
+                                       all),
+    HistorySize = gen_mod:get_opt(history_size, Opts,
+                                  fun(I) when is_integer(I), I>=0 -> I end,
+                                  20),
+    DefRoomOpts1 = gen_mod:get_opt(default_room_options, Opts,
+				   fun(L) when is_list(L) -> L end,
+				   []),
+    DefRoomOpts =
+	lists:flatmap(
+	  fun({Opt, Val}) ->
+		  Bool = fun(B) when is_boolean(B) -> B end,
+		  VFun = case Opt of
+			     allow_change_subj -> Bool;
+			     allow_private_messages -> Bool;
+			     allow_query_users -> Bool;
+			     allow_user_invites -> Bool;
+			     allow_visitor_nickchange -> Bool;
+			     allow_visitor_status -> Bool;
+			     anonymous -> Bool;
+			     captcha_protected -> Bool;
+			     logging -> Bool;
+			     members_by_default -> Bool;
+			     members_only -> Bool;
+			     moderated -> Bool;
+			     password_protected -> Bool;
+			     persistent -> Bool;
+			     public -> Bool;
+			     public_list -> Bool;
+			     mam -> Bool;
+			     password -> fun iolist_to_binary/1;
+			     title -> fun iolist_to_binary/1;
+			     allow_private_messages_from_visitors ->
+				 fun(anyone) -> anyone;
+				    (moderators) -> moderators;
+				    (nobody) -> nobody
+				 end;
+			     max_users ->
+				 fun(I) when is_integer(I), I > 0 -> I end;
+			     _ ->
+				 ?ERROR_MSG("unknown option ~p with value ~p",
+					    [Opt, Val]),
+				 fun(_) -> undefined end
+			 end,
+		  case gen_mod:get_opt(Opt, [{Opt, Val}], VFun) of
+		      undefined -> [];
+		      NewVal -> [{Opt, NewVal}]
+		  end
+	  end, DefRoomOpts1),
+    RoomShaper = gen_mod:get_opt(room_shaper, Opts,
+                                 fun(A) when is_atom(A) -> A end,
+                                 none),
     ejabberd_router:register_route(MyHost),
     load_permanent_rooms(MyHost, Host,
 			 {Access, AccessCreate, AccessAdmin, AccessPersistent},
@@ -469,7 +544,8 @@ do_route1(Host, ServerHost, Access, HistorySize, RoomShaper,
 						    attrs =
 							[{<<"xmlns">>, XMLNS}],
 						    children =
-							iq_disco_info(Lang) ++
+							iq_disco_info(
+							  ServerHost, Lang) ++
 							  Info}]},
 			    ejabberd_router:route(To, From,
 						  jlib:iq_to_xml(Res));
@@ -712,7 +788,7 @@ register_room(Host, Room, Pid) ->
     mnesia:transaction(F).
 
 
-iq_disco_info(Lang) ->
+iq_disco_info(ServerHost, Lang) ->
     [#xmlel{name = <<"identity">>,
 	    attrs =
 		[{<<"category">>, <<"conference">>},
@@ -733,7 +809,14 @@ iq_disco_info(Lang) ->
      #xmlel{name = <<"feature">>,
 	    attrs = [{<<"var">>, ?NS_RSM}], children = []},
      #xmlel{name = <<"feature">>,
-	    attrs = [{<<"var">>, ?NS_VCARD}], children = []}].
+	    attrs = [{<<"var">>, ?NS_VCARD}], children = []}] ++
+	case gen_mod:is_loaded(ServerHost, mod_mam) of
+	    true ->
+		[#xmlel{name = <<"feature">>,
+			attrs = [{<<"var">>, ?NS_MAM_0}]}];
+	    false ->
+		[]
+	end.
 
 iq_disco_items(Host, From, Lang, none) ->
     lists:zf(fun (#muc_online_room{name_host =
@@ -1289,3 +1372,56 @@ import(_LServer, riak,
 		      [{'2i', [{<<"nick_host">>, {Nick, Host}}]}]);
 import(_, _, _) ->
     pass.
+
+mod_opt_type(access) ->
+    fun (A) when is_atom(A) -> A end;
+mod_opt_type(access_admin) ->
+    fun (A) when is_atom(A) -> A end;
+mod_opt_type(access_create) ->
+    fun (A) when is_atom(A) -> A end;
+mod_opt_type(access_persistent) ->
+    fun (A) when is_atom(A) -> A end;
+mod_opt_type(db_type) -> fun gen_mod:v_db/1;
+mod_opt_type(default_room_options) ->
+    fun (L) when is_list(L) -> L end;
+mod_opt_type(history_size) ->
+    fun (I) when is_integer(I), I >= 0 -> I end;
+mod_opt_type(host) -> fun iolist_to_binary/1;
+mod_opt_type(max_room_desc) ->
+    fun (infinity) -> infinity;
+	(I) when is_integer(I), I > 0 -> I
+    end;
+mod_opt_type(max_room_id) ->
+    fun (infinity) -> infinity;
+	(I) when is_integer(I), I > 0 -> I
+    end;
+mod_opt_type(max_room_name) ->
+    fun (infinity) -> infinity;
+	(I) when is_integer(I), I > 0 -> I
+    end;
+mod_opt_type(max_user_conferences) ->
+    fun (I) when is_integer(I), I > 0 -> I end;
+mod_opt_type(max_users) ->
+    fun (I) when is_integer(I), I > 0 -> I end;
+mod_opt_type(max_users_admin_threshold) ->
+    fun (I) when is_integer(I), I > 0 -> I end;
+mod_opt_type(max_users_presence) ->
+    fun (MUP) when is_integer(MUP) -> MUP end;
+mod_opt_type(min_message_interval) ->
+    fun (MMI) when is_number(MMI) -> MMI end;
+mod_opt_type(min_presence_interval) ->
+    fun (I) when is_number(I), I >= 0 -> I end;
+mod_opt_type(room_shaper) ->
+    fun (A) when is_atom(A) -> A end;
+mod_opt_type(user_message_shaper) ->
+    fun (A) when is_atom(A) -> A end;
+mod_opt_type(user_presence_shaper) ->
+    fun (A) when is_atom(A) -> A end;
+mod_opt_type(_) ->
+    [access, access_admin, access_create, access_persistent,
+     db_type, default_room_options, history_size, host,
+     max_room_desc, max_room_id, max_room_name,
+     max_user_conferences, max_users,
+     max_users_admin_threshold, max_users_presence,
+     min_message_interval, min_presence_interval,
+     room_shaper, user_message_shaper, user_presence_shaper].

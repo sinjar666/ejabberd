@@ -25,6 +25,10 @@
 
 -module(ejabberd_s2s).
 
+-protocol({xep, 220, '1.1'}).
+
+-behaviour(ejabberd_config).
+
 -author('alexey@process-one.net').
 
 -behaviour(gen_server).
@@ -44,8 +48,8 @@
 -export([init/1, handle_call/3, handle_cast/2,
 	 handle_info/2, terminate/2, code_change/3]).
 
-%% ejabberd API
--export([get_info_s2s_connections/1, transform_options/1]).
+-export([get_info_s2s_connections/1,
+	 transform_options/1, opt_type/1]).
 
 -include("ejabberd.hrl").
 -include("logger.hrl").
@@ -221,7 +225,7 @@ check_peer_certificate(SockMod, Sock, Peer) ->
       {ok, Cert} ->
 	  case SockMod:get_verify_result(Sock) of
 	    0 ->
-		case idna:domain_utf8_to_ascii(Peer) of
+		case ejabberd_idna:domain_utf8_to_ascii(Peer) of
 		  false ->
 		      {error, <<"Cannot decode remote server name">>};
 		  AsciiPeer ->
@@ -237,8 +241,10 @@ check_peer_certificate(SockMod, Sock, Peer) ->
 	    VerifyRes ->
 		{error, p1_tls:get_cert_verify_string(VerifyRes, Cert)}
 	  end;
+      {error, _Reason} ->
+	    {error, <<"Cannot get peer certificate">>};
       error ->
-	  {error, <<"Cannot get peer certificate">>}
+	    {error, <<"Cannot get peer certificate">>}
     end.
 
 %%====================================================================
@@ -714,7 +720,7 @@ get_cert_domains(Cert) ->
 								     lresource =
 									 <<"">>} ->
 								    case
-								      idna:domain_utf8_to_ascii(LD)
+								      ejabberd_idna:domain_utf8_to_ascii(LD)
 									of
 								      false ->
 									  [];
@@ -771,3 +777,11 @@ match_labels([DL | DLabels], [PL | PLabels]) ->
 	  end;
       false -> false
     end.
+
+opt_type(route_subdomains) ->
+    fun (s2s) -> s2s;
+	(local) -> local
+    end;
+opt_type(s2s_access) ->
+    fun (A) when is_atom(A) -> A end;
+opt_type(_) -> [route_subdomains, s2s_access].

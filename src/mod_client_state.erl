@@ -25,11 +25,14 @@
 
 -module(mod_client_state).
 -author('holger@zedat.fu-berlin.de').
+-protocol({xep, 85, '2.1'}).
+-protocol({xep, 352, '0.1'}).
 
 -behavior(gen_mod).
 
--export([start/2, stop/1, add_stream_feature/2, filter_presence/2,
-	 filter_chat_states/2]).
+-export([start/2, stop/1, add_stream_feature/2,
+	 filter_presence/2, filter_chat_states/2,
+	 mod_opt_type/1]).
 
 -include("ejabberd.hrl").
 -include("logger.hrl").
@@ -39,11 +42,11 @@ start(Host, Opts) ->
     QueuePresence = gen_mod:get_opt(queue_presence, Opts,
 				    fun(true) -> true;
 				       (false) -> false
-				    end, false),
+				    end, true),
     DropChatStates = gen_mod:get_opt(drop_chat_states, Opts,
 				     fun(true) -> true;
 				        (false) -> false
-				     end, false),
+				     end, true),
     if QueuePresence; DropChatStates ->
 	   ejabberd_hooks:add(c2s_post_auth_features, Host, ?MODULE,
 			      add_stream_feature, 50),
@@ -107,3 +110,13 @@ filter_chat_states(_Action, #xmlel{name = <<"message">>} = Stanza) ->
 	  {stop, send}
     end;
 filter_chat_states(Action, _Stanza) -> Action.
+
+mod_opt_type(drop_chat_states) ->
+    fun (true) -> true;
+	(false) -> false
+    end;
+mod_opt_type(queue_presence) ->
+    fun (true) -> true;
+	(false) -> false
+    end;
+mod_opt_type(_) -> [drop_chat_states, queue_presence].

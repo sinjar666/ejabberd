@@ -61,7 +61,8 @@
     max_users                            = ?MAX_USERS_DEFAULT :: non_neg_integer() | none,
     logging                              = false :: boolean(),
     vcard                                = <<"">> :: binary(),
-    captcha_whitelist                    = (?SETS):empty() :: ?TGB_SET
+    captcha_whitelist                    = (?SETS):empty() :: ?TGB_SET,
+    mam                                  = false :: boolean()
 }).
 
 -type config() :: #config{}.
@@ -110,8 +111,8 @@
 
 -record(muc_online_users, {us = {<<>>, <<>>} :: {binary(), binary()},
                            resource = <<>> :: binary() | '_',
-                           room = <<>> :: binary() | '_',
-                           host = <<>> :: binary() | '_'}).
+                           room = <<>> :: binary() | '_' | '$1',
+                           host = <<>> :: binary() | '_' | '$2'}).
 
 -type muc_online_users() :: #muc_online_users{}.
 
