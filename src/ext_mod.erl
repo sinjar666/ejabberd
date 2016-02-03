@@ -5,7 +5,7 @@
 %%% Created : 19 Feb 2015 by Christophe Romain <christophe.romain@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2006-2015   ProcessOne
+%%% ejabberd, Copyright (C) 2006-2016   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -33,29 +33,25 @@
 	 installed_command/0, installed/0, installed/1,
 	 install/1, uninstall/1, upgrade/0, upgrade/1,
 	 add_sources/2, del_sources/1, modules_dir/0,
-	 opt_type/1]).
+	 config_dir/0, opt_type/1, get_commands_spec/0]).
 
 -include("ejabberd_commands.hrl").
+-include("logger.hrl").
 
 -define(REPOS, "https://github.com/processone/ejabberd-contrib").
 
 %% -- ejabberd init and commands
 
 start() ->
-    case is_contrib_allowed() of
-        true ->
-            [code:add_patha(module_ebin_dir(Module))
-             || {Module, _} <- installed()],
-            application:start(inets),
-            ejabberd_commands:register_commands(commands());
-        false ->
-            ok
-    end.
+    [code:add_patha(module_ebin_dir(Module))
+     || {Module, _} <- installed()],
+    application:start(inets),
+    ejabberd_commands:register_commands(get_commands_spec()).
 
 stop() ->
-    ejabberd_commands:unregister_commands(commands()).
+    ejabberd_commands:unregister_commands(get_commands_spec()).
 
-commands() ->
+get_commands_spec() ->
     [#ejabberd_commands{name = modules_update_specs,
                         tags = [admin,modules],
                         desc = "",
@@ -116,10 +112,19 @@ commands() ->
 
 update() ->
     add_sources(?REPOS),
-    lists:foreach(fun({Package, Spec}) ->
+    Res = lists:foldl(fun({Package, Spec}, Acc) ->
                 Path = proplists:get_value(url, Spec, ""),
-                add_sources(Package, Path)
-        end, modules_spec(sources_dir(), "*")).
+                Update = add_sources(Package, Path),
+                ?INFO_MSG("Update package ~s: ~p", [Package, Update]),
+                case Update of
+                    ok -> Acc;
+                    Error -> [Error|Acc]
+                end
+        end, [], modules_spec(sources_dir(), "*")),
+    case Res of
+        [] -> ok;
+        [Error|_] -> Error
+    end.
 
 available() ->
     Jungle = modules_spec(sources_dir(), "*/*"),
@@ -355,6 +360,10 @@ modules_dir() ->
 sources_dir() ->
     filename:join(modules_dir(), "sources").
 
+config_dir() ->
+    DefaultDir = filename:join(modules_dir(), "conf"),
+    getenv("CONTRIB_MODULES_CONF_DIR", DefaultDir).
+
 module_lib_dir(Package) ->
     filename:join(modules_dir(), Package).
 
@@ -501,7 +510,7 @@ compile(_Module, _Spec, DestDir) ->
     EjabBin = filename:dirname(code:which(ejabberd)),
     EjabInc = filename:join(filename:dirname(EjabBin), "include"),
     XmlHrl = filename:join(EjabInc, "xml.hrl"),
-    Logger = [{d, 'LAGER'} || code:is_loaded(lager)=/=false],
+    Logger = [{d, 'P1LOGGER'} || code:is_loaded(lager)==false],
     ExtLib = [{d, 'NO_EXT_LIB'} || filelib:is_file(XmlHrl)],
     Options = [{outdir, Ebin}, {i, "include"}, {i, EjabInc},
                verbose, report_errors, report_warnings]

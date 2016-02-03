@@ -5,7 +5,7 @@
 %%% Created : 24 Nov 2002 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2015   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -63,7 +63,8 @@
 	 get_user_ip/3,
 	 get_max_user_sessions/2,
 	 get_all_pids/0,
-	 is_existing_resource/3
+	 is_existing_resource/3,
+	 get_commands_spec/0
 	]).
 
 -export([init/1, handle_call/3, handle_cast/2,
@@ -95,10 +96,6 @@
 %%====================================================================
 %% API
 %%====================================================================
-%%--------------------------------------------------------------------
-%% Function: start_link() -> {ok,Pid} | ignore | {error,Error}
-%% Description: Starts the server
-%%--------------------------------------------------------------------
 -export_type([sid/0]).
 
 start() ->
@@ -107,8 +104,7 @@ start() ->
     supervisor:start_child(ejabberd_sup, ChildSpec).
 
 start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [],
-			  []).
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 -spec route(jid(), jid(), xmlel() | broadcast()) -> ok.
 
@@ -125,7 +121,7 @@ route(From, To, Packet) ->
 open_session(SID, User, Server, Resource, Priority, Info) ->
     set_session(SID, User, Server, Resource, Priority, Info),
     check_for_sessions_to_replace(User, Server, Resource),
-    JID = jlib:make_jid(User, Server, Resource),
+    JID = jid:make(User, Server, Resource),
     ejabberd_hooks:run(sm_register_connection_hook,
 		       JID#jid.lserver, [SID, JID, Info]).
 
@@ -138,16 +134,19 @@ open_session(SID, User, Server, Resource, Info) ->
 
 close_session(SID, User, Server, Resource) ->
     Mod = get_sm_backend(),
-    LUser = jlib:nodeprep(User),
-    LServer = jlib:nameprep(Server),
-    LResource = jlib:resourceprep(Resource),
+    LUser = jid:nodeprep(User),
+    LServer = jid:nameprep(Server),
+    LResource = jid:resourceprep(Resource),
     Info = case Mod:delete_session(LUser, LServer, LResource, SID) of
 	       {ok, #session{info = I}} -> I;
 	       {error, notfound} -> []
 	   end,
-    JID = jlib:make_jid(User, Server, Resource),
+    JID = jid:make(User, Server, Resource),
     ejabberd_hooks:run(sm_remove_connection_hook,
 		       JID#jid.lserver, [SID, JID, Info]).
+
+-spec check_in_subscription(any(), binary(), binary(),
+                            any(), any(), any()) -> any().
 
 check_in_subscription(Acc, User, Server, _JID, _Type, _Reason) ->
     case ejabberd_auth:is_user_exists(User, Server) of
@@ -166,13 +165,13 @@ bounce_offline_message(From, To, Packet) ->
 -spec disconnect_removed_user(binary(), binary()) -> ok.
 
 disconnect_removed_user(User, Server) ->
-    ejabberd_sm:route(jlib:make_jid(<<"">>, <<"">>, <<"">>),
-		      jlib:make_jid(User, Server, <<"">>),
+    ejabberd_sm:route(jid:make(<<"">>, <<"">>, <<"">>),
+		      jid:make(User, Server, <<"">>),
                       {broadcast, {exit, <<"User removed">>}}).
 
 get_user_resources(User, Server) ->
-    LUser = jlib:nodeprep(User),
-    LServer = jlib:nameprep(Server),
+    LUser = jid:nodeprep(User),
+    LServer = jid:nameprep(Server),
     Mod = get_sm_backend(),
     Ss = Mod:get_sessions(LUser, LServer),
     [element(3, S#session.usr) || S <- clean_session_list(Ss)].
@@ -188,9 +187,9 @@ get_user_present_resources(LUser, LServer) ->
 -spec get_user_ip(binary(), binary(), binary()) -> ip().
 
 get_user_ip(User, Server, Resource) ->
-    LUser = jlib:nodeprep(User),
-    LServer = jlib:nameprep(Server),
-    LResource = jlib:resourceprep(Resource),
+    LUser = jid:nodeprep(User),
+    LServer = jid:nameprep(Server),
+    LResource = jid:resourceprep(Resource),
     Mod = get_sm_backend(),
     case Mod:get_sessions(LUser, LServer, LResource) of
 	[] ->
@@ -203,9 +202,9 @@ get_user_ip(User, Server, Resource) ->
 -spec get_user_info(binary(), binary(), binary()) -> info() | offline.
 
 get_user_info(User, Server, Resource) ->
-    LUser = jlib:nodeprep(User),
-    LServer = jlib:nameprep(Server),
-    LResource = jlib:resourceprep(Resource),
+    LUser = jid:nodeprep(User),
+    LServer = jid:nameprep(Server),
+    LResource = jid:resourceprep(Resource),
     Mod = get_sm_backend(),
     case Mod:get_sessions(LUser, LServer, LResource) of
 	[] ->
@@ -226,7 +225,7 @@ set_presence(SID, User, Server, Resource, Priority,
     set_session(SID, User, Server, Resource, Priority,
 		Info),
     ejabberd_hooks:run(set_presence_hook,
-		       jlib:nameprep(Server),
+		       jid:nameprep(Server),
 		       [User, Server, Resource, Presence]).
 
 -spec unset_presence(sid(), binary(), binary(),
@@ -237,7 +236,7 @@ unset_presence(SID, User, Server, Resource, Status,
     set_session(SID, User, Server, Resource, undefined,
 		Info),
     ejabberd_hooks:run(unset_presence_hook,
-		       jlib:nameprep(Server),
+		       jid:nameprep(Server),
 		       [User, Server, Resource, Status]).
 
 -spec close_session_unset_presence(sid(), binary(), binary(),
@@ -247,15 +246,15 @@ close_session_unset_presence(SID, User, Server,
 			     Resource, Status) ->
     close_session(SID, User, Server, Resource),
     ejabberd_hooks:run(unset_presence_hook,
-		       jlib:nameprep(Server),
+		       jid:nameprep(Server),
 		       [User, Server, Resource, Status]).
 
 -spec get_session_pid(binary(), binary(), binary()) -> none | pid().
 
 get_session_pid(User, Server, Resource) ->
-    LUser = jlib:nodeprep(User),
-    LServer = jlib:nameprep(Server),
-    LResource = jlib:resourceprep(Resource),
+    LUser = jid:nodeprep(User),
+    LServer = jid:nameprep(Server),
+    LResource = jid:resourceprep(Resource),
     Mod = get_sm_backend(),
     case Mod:get_sessions(LUser, LServer, LResource) of
 	[#session{sid = {_, Pid}}] -> Pid;
@@ -268,6 +267,8 @@ dirty_get_sessions_list() ->
     Mod = get_sm_backend(),
     [S#session.usr || S <- Mod:get_sessions()].
 
+-spec dirty_get_my_sessions_list() -> [#session{}].
+
 dirty_get_my_sessions_list() ->
     Mod = get_sm_backend(),
     [S || S <- Mod:get_sessions(), node(element(2, S#session.sid)) == node()].
@@ -275,7 +276,7 @@ dirty_get_my_sessions_list() ->
 -spec get_vh_session_list(binary()) -> [ljid()].
 
 get_vh_session_list(Server) ->
-    LServer = jlib:nameprep(Server),
+    LServer = jid:nameprep(Server),
     Mod = get_sm_backend(),
     [S#session.usr || S <- Mod:get_sessions(LServer)].
 
@@ -285,20 +286,20 @@ get_all_pids() ->
     Mod = get_sm_backend(),
     [element(2, S#session.sid) || S <- Mod:get_sessions()].
 
+-spec get_vh_session_number(binary()) -> non_neg_integer().
+
 get_vh_session_number(Server) ->
-    LServer = jlib:nameprep(Server),
+    LServer = jid:nameprep(Server),
     Mod = get_sm_backend(),
     length(Mod:get_sessions(LServer)).
 
 register_iq_handler(Host, XMLNS, Module, Fun) ->
-    ejabberd_sm !
-      {register_iq_handler, Host, XMLNS, Module, Fun}.
+    ejabberd_sm ! {register_iq_handler, Host, XMLNS, Module, Fun}.
 
 -spec register_iq_handler(binary(), binary(), atom(), atom(), list()) -> any().
 
 register_iq_handler(Host, XMLNS, Module, Fun, Opts) ->
-    ejabberd_sm !
-      {register_iq_handler, Host, XMLNS, Module, Fun, Opts}.
+    ejabberd_sm ! {register_iq_handler, Host, XMLNS, Module, Fun, Opts}.
 
 -spec unregister_iq_handler(binary(), binary()) -> any().
 
@@ -310,13 +311,6 @@ unregister_iq_handler(Host, XMLNS) ->
 %% gen_server callbacks
 %%====================================================================
 
-%%--------------------------------------------------------------------
-%% Function: init(Args) -> {ok, State} |
-%%                         {ok, State, Timeout} |
-%%                         ignore               |
-%%                         {stop, Reason}
-%% Description: Initiates the server
-%%--------------------------------------------------------------------
 init([]) ->
     Mod = get_sm_backend(),
     Mod:init(),
@@ -330,35 +324,14 @@ init([]) ->
 	      ejabberd_hooks:add(remove_user, Host,
 				 ejabberd_sm, disconnect_removed_user, 100)
       end, ?MYHOSTS),
-    ejabberd_commands:register_commands(commands()),
+    ejabberd_commands:register_commands(get_commands_spec()),
     {ok, #state{}}.
 
-%%--------------------------------------------------------------------
-%% Function: %% handle_call(Request, From, State) -> {reply, Reply, State} |
-%%                                      {reply, Reply, State, Timeout} |
-%%                                      {noreply, State} |
-%%                                      {noreply, State, Timeout} |
-%%                                      {stop, Reason, Reply, State} |
-%%                                      {stop, Reason, State}
-%% Description: Handling call messages
-%%--------------------------------------------------------------------
 handle_call(_Request, _From, State) ->
     Reply = ok, {reply, Reply, State}.
 
-%%--------------------------------------------------------------------
-%% Function: handle_cast(Msg, State) -> {noreply, State} |
-%%                                      {noreply, State, Timeout} |
-%%                                      {stop, Reason, State}
-%% Description: Handling cast messages
-%%--------------------------------------------------------------------
 handle_cast(_Msg, State) -> {noreply, State}.
 
-%%--------------------------------------------------------------------
-%% Function: handle_info(Info, State) -> {noreply, State} |
-%%                                       {noreply, State, Timeout} |
-%%                                       {stop, Reason, State}
-%% Description: Handling all non call/cast messages
-%%--------------------------------------------------------------------
 handle_info({route, From, To, Packet}, State) ->
     case catch do_route(From, To, Packet) of
 	{'EXIT', Reason} ->
@@ -388,31 +361,23 @@ handle_info({unregister_iq_handler, Host, XMLNS},
     {noreply, State};
 handle_info(_Info, State) -> {noreply, State}.
 
-%%--------------------------------------------------------------------
-%% Function: terminate(Reason, State) -> void()
-%% Description: This function is called by a gen_server when it is about to
-%% terminate. It should be the opposite of Module:init/1 and do any necessary
-%% cleaning up. When it returns, the gen_server terminates with Reason.
-%% The return value is ignored.
-%%--------------------------------------------------------------------
 terminate(_Reason, _State) ->
-    ejabberd_commands:unregister_commands(commands()),
+    ejabberd_commands:unregister_commands(get_commands_spec()),
     ok.
 
-%%--------------------------------------------------------------------
-%% Func: code_change(OldVsn, State, Extra) -> {ok, NewState}
-%% Description: Convert process state when code is changed
-%%--------------------------------------------------------------------
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 %%--------------------------------------------------------------------
 %%% Internal functions
 %%--------------------------------------------------------------------
 
+-spec set_session(sid(), binary(), binary(), binary(),
+                  prio(), info()) -> ok.
+
 set_session(SID, User, Server, Resource, Priority, Info) ->
-    LUser = jlib:nodeprep(User),
-    LServer = jlib:nameprep(Server),
-    LResource = jlib:resourceprep(Resource),
+    LUser = jid:nodeprep(User),
+    LServer = jid:nameprep(Server),
+    LResource = jid:resourceprep(Resource),
     US = {LUser, LServer},
     USR = {LUser, LServer, LResource},
     Mod = get_sm_backend(),
@@ -426,12 +391,12 @@ do_route(From, To, {broadcast, _} = Packet) ->
         <<"">> ->
             lists:foreach(fun(R) ->
                                   do_route(From,
-                                           jlib:jid_replace_resource(To, R),
+                                           jid:replace_resource(To, R),
                                            Packet)
                           end,
                           get_user_resources(To#jid.user, To#jid.server));
         _ ->
-            {U, S, R} = jlib:jid_tolower(To),
+            {U, S, R} = jid:tolower(To),
 	    Mod = get_sm_backend(),
 	    case Mod:get_sessions(U, S, R) of
                 [] ->
@@ -510,7 +475,7 @@ do_route(From, To, #xmlel{} = Packet) ->
 		       PResources = get_user_present_resources(LUser, LServer),
 		       lists:foreach(fun ({_, R}) ->
 					     do_route(From,
-						      jlib:jid_replace_resource(To,
+						      jid:replace_resource(To,
 										R),
 						      Packet)
 				     end,
@@ -599,7 +564,7 @@ route_message(From, To, Packet, Type) ->
 	  when is_integer(Priority), Priority >= 0 ->
 	  lists:foreach(fun ({P, R}) when P == Priority;
 					  (P >= 0) and (Type == headline) ->
-				LResource = jlib:resourceprep(R),
+				LResource = jid:resourceprep(R),
 				Mod = get_sm_backend(),
 				case Mod:get_sessions(LUser, LServer,
 						      LResource) of
@@ -655,9 +620,9 @@ clean_session_list([S1, S2 | Rest], Res) ->
 
 %% On new session, check if some existing connections need to be replace
 check_for_sessions_to_replace(User, Server, Resource) ->
-    LUser = jlib:nodeprep(User),
-    LServer = jlib:nameprep(Server),
-    LResource = jlib:resourceprep(Resource),
+    LUser = jid:nodeprep(User),
+    LServer = jid:nameprep(Server),
+    LResource = jid:resourceprep(Resource),
     check_existing_resources(LUser, LServer, LResource),
     check_max_sessions(LUser, LServer).
 
@@ -679,9 +644,9 @@ is_existing_resource(LUser, LServer, LResource) ->
     [] /= get_resource_sessions(LUser, LServer, LResource).
 
 get_resource_sessions(User, Server, Resource) ->
-    LUser = jlib:nodeprep(User),
-    LServer = jlib:nameprep(Server),
-    LResource = jlib:resourceprep(Resource),
+    LUser = jid:nodeprep(User),
+    LServer = jid:nameprep(Server),
+    LResource = jid:resourceprep(Resource),
     Mod = get_sm_backend(),
     [S#session.sid || S <- Mod:get_sessions(LUser, LServer, LResource)].
 
@@ -699,7 +664,7 @@ check_max_sessions(LUser, LServer) ->
 %% Defaults to infinity
 get_max_user_sessions(LUser, Host) ->
     case acl:match_rule(Host, max_user_sessions,
-			jlib:make_jid(LUser, Host, <<"">>))
+			jid:make(LUser, Host, <<"">>))
 	of
       Max when is_integer(Max) -> Max;
       infinity -> infinity;
@@ -741,7 +706,7 @@ force_update_presence({LUser, LServer}) ->
     Mod = get_sm_backend(),
     Ss = Mod:get_sessions(LUser, LServer),
     lists:foreach(fun (#session{sid = {_, Pid}}) ->
-			  Pid ! {force_update_presence, LUser}
+			  Pid ! {force_update_presence, LUser, LServer}
 		  end,
 		  Ss).
 
@@ -759,22 +724,25 @@ get_sm_backend() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%% ejabberd commands
 
-commands() ->
+get_commands_spec() ->
     [#ejabberd_commands{name = connected_users,
 			tags = [session],
 			desc = "List all established sessions",
+                        policy = admin,
 			module = ?MODULE, function = connected_users, args = [],
 			result = {connected_users, {list, {sessions, string}}}},
      #ejabberd_commands{name = connected_users_number,
 			tags = [session, stats],
 			desc = "Get the number of established sessions",
+                        policy = admin,
 			module = ?MODULE, function = connected_users_number,
 			args = [], result = {num_sessions, integer}},
      #ejabberd_commands{name = user_resources,
 			tags = [session],
 			desc = "List user's connected resources",
+                        policy = user,
 			module = ?MODULE, function = user_resources,
-			args = [{user, binary}, {host, binary}],
+			args = [],
 			result = {resources, {list, {resource, string}}}},
      #ejabberd_commands{name = kick_user,
 			tags = [session],

@@ -5,7 +5,7 @@
 %%% Created :  2 Jan 2003 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2015   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -35,7 +35,7 @@
 -export([start/2, init/3, stop/1, get_sm_features/5,
 	 process_local_iq/3, process_sm_iq/3, reindex_vcards/0,
 	 remove_user/2, export/1, import/1, import/3,
-	 mod_opt_type/1]).
+	 mod_opt_type/1, set_vcard/3]).
 
 -include("ejabberd.hrl").
 -include("logger.hrl").
@@ -94,7 +94,7 @@ start(Host, Opts) ->
 				  <<"vjud.@HOST@">>),
     Search = gen_mod:get_opt(search, Opts,
                              fun(B) when is_boolean(B) -> B end,
-                             true),
+                             false),
     register(gen_mod:get_module_proc(Host, ?PROCNAME),
 	     spawn(?MODULE, init, [MyHost, Host, Search])).
 
@@ -166,7 +166,7 @@ process_local_iq(_From, _To,
 					    [{xmlcdata,
 					      <<(translate:translate(Lang,
 								     <<"Erlang Jabber Server">>))/binary,
-						"\nCopyright (c) 2002-2015 ProcessOne">>}]},
+						"\nCopyright (c) 2002-2016 ProcessOne">>}]},
 				 #xmlel{name = <<"BDAY">>, attrs = [],
 					children =
 					    [{xmlcdata, <<"2002-11-16">>}]}]}]}
@@ -261,7 +261,7 @@ set_vcard(User, LServer, VCARD) ->
 	      <<"">> -> EMail2;
 	      _ -> EMail1
 	    end,
-    LUser = jlib:nodeprep(User),
+    LUser = jid:nodeprep(User),
     LFN = string2lower(FN),
     LFamily = string2lower(Family),
     LGiven = string2lower(Given),
@@ -404,7 +404,7 @@ string2lower(String) ->
 				[{xmlcdata,
 				  <<(translate:translate(Lang,
 							 <<"Search users in ">>))/binary,
-				    (jlib:jid_to_string(JID))/binary>>}]},
+				    (jid:to_string(JID))/binary>>}]},
 		     #xmlel{name = <<"instructions">>, attrs = [],
 			    children =
 				[{xmlcdata,
@@ -578,7 +578,7 @@ iq_get_vcard(Lang) ->
 		[{xmlcdata,
 		  <<(translate:translate(Lang,
 					 <<"ejabberd vCard module">>))/binary,
-		    "\nCopyright (c) 2003-2015 ProcessOne">>}]}].
+		    "\nCopyright (c) 2003-2016 ProcessOne">>}]}].
 
 find_xdata_el(#xmlel{children = SubEls}) ->
     find_xdata_el1(SubEls).
@@ -607,7 +607,7 @@ search_result(Lang, JID, ServerHost, Data) ->
 		[{xmlcdata,
 		  <<(translate:translate(Lang,
 					 <<"Search Results for ">>))/binary,
-		    (jlib:jid_to_string(JID))/binary>>}]},
+		    (jid:to_string(JID))/binary>>}]},
      #xmlel{name = <<"reported">>, attrs = [],
 	    children =
 		[?TLFIELD(<<"text-single">>, <<"Jabber ID">>,
@@ -916,8 +916,8 @@ reindex_vcards() ->
     mnesia:transaction(F).
 
 remove_user(User, Server) ->
-    LUser = jlib:nodeprep(User),
-    LServer = jlib:nameprep(Server),
+    LUser = jid:nodeprep(User),
+    LServer = jid:nameprep(Server),
     remove_user(LUser, LServer,
 		gen_mod:db_type(LServer, ?MODULE)).
 

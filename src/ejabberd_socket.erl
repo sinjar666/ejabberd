@@ -5,7 +5,7 @@
 %%% Created : 23 Aug 2006 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2015   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -67,15 +67,12 @@
 
 -export_type([socket_state/0, sockmod/0]).
 
--spec start(atom(), sockmod(), socket(), [{atom(), any()}]) -> any().
 
 %%====================================================================
 %% API
 %%====================================================================
-%%--------------------------------------------------------------------
-%% Function:
-%% Description:
-%%--------------------------------------------------------------------
+-spec start(atom(), sockmod(), socket(), [{atom(), any()}]) -> any().
+
 start(Module, SockMod, Socket, Opts) ->
     case Module:socket_type() of
       xml_stream ->
@@ -241,7 +238,3 @@ peername(#socket_state{sockmod = SockMod,
       _ -> SockMod:peername(Socket)
     end.
 
-%%====================================================================
-%% Internal functions
-%%====================================================================
-%====================================================================

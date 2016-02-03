@@ -5,7 +5,7 @@
 %%% Created : 14 Dec 2002 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2015   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -69,8 +69,7 @@ start() ->
     State0 = read_file(Config),
     State = validate_opts(State0),
     %% This start time is used by mod_last:
-    {MegaSecs, Secs, _} = now(),
-    UnixTime = MegaSecs*1000000 + Secs,
+    UnixTime = p1_time_compat:system_time(seconds),
     SharedKey = case erlang:get_cookie() of
                     nocookie ->
                         p1_sha:sha(randoms:get_string());
@@ -192,7 +191,6 @@ env_binary_to_list(Application, Parameter) ->
 %% Returns a list of plain terms,
 %% in which the options 'include_config_file' were parsed
 %% and the terms in those files were included.
-%% @spec(string()) -> [term()]
 %% @spec(iolist()) -> [term()]
 get_plain_terms_file(File) ->
     get_plain_terms_file(File, [{include_files, true}]).
@@ -206,9 +204,12 @@ get_plain_terms_file(File1, Opts) ->
             BinTerms1 = strings_to_binary(Terms),
             ModInc = case proplists:get_bool(include_modules_configs, Opts) of
                          true ->
-                             filelib:wildcard(ext_mod:modules_dir() ++ "/*/conf/*.{yml,yaml}");
+                            Files = [{filename:rootname(filename:basename(F)), F}
+                                     || F <- filelib:wildcard(ext_mod:config_dir() ++ "/*.{yml,yaml}")
+                                          ++ filelib:wildcard(ext_mod:modules_dir() ++ "/*/conf/*.{yml,yaml}")],
+                            [proplists:get_value(F,Files) || F <- proplists:get_keys(Files)];
                          _ ->
-                             []
+                            []
                      end,
             BinTerms = BinTerms1 ++ [{include_config_file, list_to_binary(V)} || V <- ModInc],
             case proplists:get_bool(include_files, Opts) of
@@ -304,7 +305,7 @@ normalize_hosts(Hosts) ->
 normalize_hosts([], PrepHosts) ->
     lists:reverse(PrepHosts);
 normalize_hosts([Host|Hosts], PrepHosts) ->
-    case jlib:nodeprep(iolist_to_binary(Host)) of
+    case jid:nodeprep(iolist_to_binary(Host)) of
 	error ->
 	    ?ERROR_MSG("Can't load config file: "
 		       "invalid host name [~p]", [Host]),
@@ -370,8 +371,27 @@ exit_or_halt(ExitText) ->
 
 get_config_option_key(Name, Val) ->
     if Name == listen ->
-            [{Key, _, _}] = ejabberd_listener:validate_cfg([Val]),
-            Key;
+            case Val of
+                {{Port, IP, Trans}, _Mod, _Opts} ->
+                    {Port, IP, Trans};
+                {{Port, Trans}, _Mod, _Opts} when Trans == tcp; Trans == udp ->
+                    {Port, {0,0,0,0}, Trans};
+                {{Port, IP}, _Mod, _Opts} ->
+                    {Port, IP, tcp};
+                {Port, _Mod, _Opts} ->
+                    {Port, {0,0,0,0}, tcp};
+                V when is_list(V) ->
+                    lists:foldl(
+                      fun({port, Port}, {_, IP, T}) ->
+                              {Port, IP, T};
+                         ({ip, IP}, {Port, _, T}) ->
+                              {Port, IP, T};
+                         ({transport, T}, {Port, IP, _}) ->
+                              {Port, IP, T};
+                         (_, Res) ->
+                              Res
+                      end, {5222, {0,0,0,0}, tcp}, Val)
+            end;
        is_tuple(Val) ->
             element(1, Val);
        true ->
@@ -386,7 +406,6 @@ maps_to_lists(IMap) ->
                  (Name, Val, Res) ->
                       [{Name, Val} | Res]
               end, [], IMap).
-
 
 merge_configs(Terms, ResMap) ->
     lists:foldl(fun({Name, Val}, Map) when is_list(Val) ->
@@ -406,7 +425,6 @@ merge_configs(Terms, ResMap) ->
                         maps:put(Name, Val, Map)
                 end, ResMap, Terms).
 
-
 %% @doc Include additional configuration files in the list of terms.
 %% @spec ([term()]) -> [term()]
 include_config_files(Terms) ->
@@ -424,8 +442,8 @@ include_config_files(Terms) ->
                        include_config_file(File, Opts)
                end, lists:flatten(FileOpts)),
 
-    M1 = merge_configs(Terms1, #{}),
-    M2 = merge_configs(Terms2, M1),
+    M1 = merge_configs(transform_terms(Terms1), #{}),
+    M2 = merge_configs(transform_terms(Terms2), M1),
     maps_to_lists(M2).
 
 transform_include_option({include_config_file, File}) when is_list(File) ->
@@ -740,6 +758,7 @@ get_option(Opt, F, Default) ->
 
 get_modules_with_options() ->
     {ok, Mods} = application:get_key(ejabberd, modules),
+    ExtMods = [Name || {Name, _Details} <- ext_mod:installed()],
     lists:foldl(
       fun(Mod, D) ->
 	      case catch Mod:opt_type('') of
@@ -751,7 +770,7 @@ get_modules_with_options() ->
 		  {'EXIT', {undef, _}} ->
 		      D
 	      end
-      end, dict:new(), [?MODULE|Mods]).
+      end, dict:new(), [?MODULE|ExtMods++Mods]).
 
 validate_opts(#state{opts = Opts} = State) ->
     ModOpts = get_modules_with_options(),
@@ -830,6 +849,7 @@ replace_module(mod_roster_odbc) -> {mod_roster, odbc};
 replace_module(mod_shared_roster_odbc) -> {mod_shared_roster, odbc};
 replace_module(mod_vcard_odbc) -> {mod_vcard, odbc};
 replace_module(mod_vcard_xupdate_odbc) -> {mod_vcard_xupdate, odbc};
+replace_module(mod_pubsub_odbc) -> {mod_pubsub, odbc};
 replace_module(Module) ->
     case is_elixir_module(Module) of
         true  -> expand_elixir_module(Module);

@@ -5,7 +5,7 @@
 %%% Created : 09-10-2010 by Eric Cestari <ecestari@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2015   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -75,7 +75,7 @@
 -export_type([ws_socket/0]).
 
 start(WS) ->
-    supervisor:start_child(ejabberd_wsloop_sup, [WS]).
+    gen_fsm:start(?MODULE, [WS], ?FSMOPTS).
 
 start_link(WS) ->
     gen_fsm:start_link(?MODULE, [WS], ?FSMOPTS).
@@ -115,6 +115,7 @@ init([{#ws{ip = IP, http_opts = HOpts}, _} = WS]) ->
     SOpts = lists:filtermap(fun({stream_managment, _}) -> true;
                                ({max_ack_queue, _}) -> true;
                                ({resume_timeout, _}) -> true;
+                               ({max_resume_timeout, _}) -> true;
                                ({resend_on_timeout, _}) -> true;
                                (_) -> false
                             end, HOpts),

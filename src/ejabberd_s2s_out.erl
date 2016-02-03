@@ -5,7 +5,7 @@
 %%% Created :  6 Dec 2002 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2015   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -37,7 +37,7 @@
 	 start_connection/1,
 	 terminate_if_waiting_delay/2,
 	 stop_connection/1,
-         transform_options/1]).
+	 transform_options/1]).
 
 -export([init/1, open_socket/2, wait_for_stream/2,
 	 wait_for_validation/2, wait_for_features/2,
@@ -56,6 +56,7 @@
 -record(state,
 	{socket                           :: ejabberd_socket:socket_state(),
          streamid = <<"">>                :: binary(),
+	 remote_streamid = <<"">>         :: binary(),
          use_v10 = true                   :: boolean(),
          tls = false                      :: boolean(),
 	 tls_required = false             :: boolean(),
@@ -69,7 +70,7 @@
          server = <<"">>                  :: binary(),
 	 queue = queue:new()              :: ?TQUEUE,
          delay_to_retry = undefined_delay :: undefined_delay | non_neg_integer(),
-         new = false                      :: false | binary(),
+         new = false                      :: boolean(),
 	 verify = false                   :: false | {pid(), binary(), binary()},
          bridge                           :: {atom(), atom()},
          timer = make_ref()               :: reference()}).
@@ -84,15 +85,6 @@
 
 -define(FSMOPTS, []).
 
--endif.
-
-%% Module start with or without supervisor:
--ifdef(NO_TRANSIENT_SUPERVISORS).
--define(SUPERVISOR_START, p1_fsm:start(ejabberd_s2s_out, [From, Host, Type],
-				       fsm_limit_opts() ++ ?FSMOPTS)).
--else.
--define(SUPERVISOR_START, supervisor:start_child(ejabberd_s2s_out_sup,
-						 [From, Host, Type])).
 -endif.
 
 -define(FSMTIMEOUT, 30000).
@@ -127,7 +119,8 @@
 %%% API
 %%%----------------------------------------------------------------------
 start(From, Host, Type) ->
-    ?SUPERVISOR_START.
+    supervisor:start_child(ejabberd_s2s_out_sup,
+			   [From, Host, Type]).
 
 start_link(From, Host, Type) ->
     p1_fsm:start_link(ejabberd_s2s_out, [From, Host, Type],
@@ -141,13 +134,6 @@ stop_connection(Pid) -> p1_fsm:send_event(Pid, closed).
 %%% Callback functions from p1_fsm
 %%%----------------------------------------------------------------------
 
-%%----------------------------------------------------------------------
-%% Func: init/1
-%% Returns: {ok, StateName, StateData}          |
-%%          {ok, StateName, StateData, Timeout} |
-%%          ignore                              |
-%%          {stop, StopReason}
-%%----------------------------------------------------------------------
 init([From, Server, Type]) ->
     process_flag(trap_exit, true),
     ?DEBUG("started: ~p", [{From, Server, Type}]),
@@ -211,7 +197,7 @@ init([From, Server, Type]) ->
                   true -> TLSOpts4
               end,
     {New, Verify} = case Type of
-		      {new, Key} -> {Key, false};
+		      new -> {true, false};
 		      {verify, Pid, Key, SID} ->
 			  start_connection(self()), {false, {Pid, Key, SID}}
 		    end,
@@ -222,12 +208,6 @@ init([From, Server, Type]) ->
 	    tls_options = TLSOpts, queue = queue:new(), myname = From,
 	    server = Server, new = New, verify = Verify, timer = Timer}}.
 
-%%----------------------------------------------------------------------
-%% Func: StateName/2
-%% Returns: {next_state, NextStateName, NextStateData}          |
-%%          {next_state, NextStateName, NextStateData, Timeout} |
-%%          {stop, Reason, NewStateData}
-%%----------------------------------------------------------------------
 open_socket(init, StateData) ->
     log_s2s_out(StateData#state.new, StateData#state.myname,
 		StateData#state.server, StateData#state.tls),
@@ -292,8 +272,6 @@ open_socket(timeout, StateData) ->
 open_socket(_, StateData) ->
     {next_state, open_socket, StateData}.
 
-%%----------------------------------------------------------------------
-%% IPv4
 open_socket1({_, _, _, _} = Addr, Port) ->
     open_socket2(inet, Addr, Port);
 %% IPv6
@@ -333,7 +311,7 @@ open_socket2(Type, Addr, Port) ->
 
 wait_for_stream({xmlstreamstart, _Name, Attrs},
 		StateData) ->
-    {CertCheckRes, CertCheckMsg, NewStateData} =
+    {CertCheckRes, CertCheckMsg, StateData0} =
 	if StateData#state.tls_certverify, StateData#state.tls_enabled ->
 	       {Res, Msg} =
 		   ejabberd_s2s:check_peer_certificate(ejabberd_socket,
@@ -345,6 +323,8 @@ wait_for_stream({xmlstreamstart, _Name, Attrs},
 	   true ->
 	       {no_verify, <<"Not verified">>, StateData}
 	end,
+    RemoteStreamID = xml:get_attr_s(<<"id">>, Attrs),
+    NewStateData = StateData0#state{remote_streamid = RemoteStreamID},
     case {xml:get_attr_s(<<"xmlns">>, Attrs),
 	  xml:get_attr_s(<<"xmlns:db">>, Attrs),
 	  xml:get_attr_s(<<"version">>, Attrs) == <<"1.0">>}
@@ -872,19 +852,7 @@ stream_established(closed, StateData) ->
 %%    Reply = ok,
 %%    {reply, Reply, state_name, StateData}.
 
-%%----------------------------------------------------------------------
-%% Func: handle_event/3
-%% Returns: {next_state, NextStateName, NextStateData}          |
-%%          {next_state, NextStateName, NextStateData, Timeout} |
-%%          {stop, Reason, NewStateData}
-%%----------------------------------------------------------------------
 handle_event(_Event, StateName, StateData) ->
-%%----------------------------------------------------------------------
-%% Func: handle_sync_event/4
-%% Returns: The associated StateData for this connection
-%%   {reply, Reply, NextStateName, NextStateData}
-%%   Reply = {state_infos, [{InfoName::atom(), InfoValue::any()]
-%%----------------------------------------------------------------------
     {next_state, StateName, StateData,
      get_timeout_interval(StateName)}.
 
@@ -933,12 +901,6 @@ handle_sync_event(_Event, _From, StateName,
 code_change(_OldVsn, StateName, StateData, _Extra) ->
     {ok, StateName, StateData}.
 
-%%----------------------------------------------------------------------
-%% Func: handle_info/3
-%% Returns: {next_state, NextStateName, NextStateData}          |
-%%          {next_state, NextStateName, NextStateData, Timeout} |
-%%          {stop, Reason, NewStateData}
-%%----------------------------------------------------------------------
 handle_info({send_text, Text}, StateName, StateData) ->
     send_text(StateData, Text),
     cancel_timer(StateData#state.timer),
@@ -995,19 +957,14 @@ handle_info(_, StateName, StateData) ->
     {next_state, StateName, StateData,
      get_timeout_interval(StateName)}.
 
-%%----------------------------------------------------------------------
-%% Func: terminate/3
-%% Purpose: Shutdown the fsm
-%% Returns: any
-%%----------------------------------------------------------------------
 terminate(Reason, StateName, StateData) ->
     ?DEBUG("terminated: ~p", [{Reason, StateName}]),
     case StateData#state.new of
       false -> ok;
-      Key ->
+      true ->
 	  ejabberd_s2s:remove_connection({StateData#state.myname,
 					  StateData#state.server},
-					 self(), Key)
+					 self())
     end,
     bounce_queue(StateData#state.queue,
 		 ?ERR_REMOTE_SERVER_NOT_FOUND),
@@ -1018,11 +975,6 @@ terminate(Reason, StateName, StateData) ->
     end,
     ok.
 
-%%----------------------------------------------------------------------
-%% Func: print_state/1
-%% Purpose: Prepare the state to be printed on error log
-%% Returns: State to print
-%%----------------------------------------------------------------------
 print_state(State) -> State.
 
 %%%----------------------------------------------------------------------
@@ -1050,9 +1002,9 @@ bounce_element(El, Error) ->
       <<"result">> -> ok;
       _ ->
 	  Err = jlib:make_error_reply(El, Error),
-	  From = jlib:string_to_jid(xml:get_tag_attr_s(<<"from">>,
+	  From = jid:from_string(xml:get_tag_attr_s(<<"from">>,
 						       El)),
-	  To = jlib:string_to_jid(xml:get_tag_attr_s(<<"to">>,
+	  To = jid:from_string(xml:get_tag_attr_s(<<"to">>,
 						     El)),
 	  ejabberd_router:route(To, From, Err)
     end.
@@ -1080,19 +1032,18 @@ bounce_messages(Error) ->
 send_db_request(StateData) ->
     Server = StateData#state.server,
     New = case StateData#state.new of
-	    false ->
-		case ejabberd_s2s:try_register({StateData#state.myname,
-						Server})
-		    of
-		  {key, Key} -> Key;
-		  false -> false
-		end;
-	    Key -> Key
+	      false ->
+		  ejabberd_s2s:try_register({StateData#state.myname, Server});
+	      true ->
+		  true
 	  end,
     NewStateData = StateData#state{new = New},
     try case New of
-	  false -> ok;
-	  Key1 ->
+	    false -> ok;
+	    true ->
+	      Key1 = ejabberd_s2s:make_key(
+		       {StateData#state.myname, Server},
+		       StateData#state.remote_streamid),
 	      send_element(StateData,
 			   #xmlel{name = <<"db:result">>,
 				  attrs =
@@ -1148,8 +1099,7 @@ get_addr_port(Server) ->
 	  ?DEBUG("srv lookup of '~s': ~p~n",
 		 [Server, HEnt#hostent.h_addr_list]),
 	  AddrList = HEnt#hostent.h_addr_list,
-	  {A1, A2, A3} = now(),
-	  random:seed(A1, A2, A3),
+	  random:seed(p1_time_compat:timestamp()),
 	  case catch lists:map(fun ({Priority, Weight, Port,
 				     Host}) ->
 				       N = case Weight of
@@ -1324,14 +1274,10 @@ wait_before_reconnect(StateData) ->
     cancel_timer(StateData#state.timer),
     Delay = case StateData#state.delay_to_retry of
 	      undefined_delay ->
-		  {_, _, MicroSecs} = now(), MicroSecs rem 14000 + 1000;
+		  {_, _, MicroSecs} = p1_time_compat:timestamp(), MicroSecs rem 14000 + 1000;
 	      D1 -> lists:min([D1 * 2, get_max_retry_delay()])
 	    end,
     Timer = erlang:start_timer(Delay, self(), []),
-%% @doc Get the maximum allowed delay for retry to reconnect (in miliseconds).
-%% The default value is 5 minutes.
-%% The option {s2s_max_retry_delay, Seconds} can be used (in seconds).
-%% @spec () -> integer()
     {next_state, wait_before_retry,
      StateData#state{timer = Timer, delay_to_retry = Delay,
 		     queue = queue:new()}}.

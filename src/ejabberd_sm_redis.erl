@@ -1,6 +1,6 @@
 %%%-------------------------------------------------------------------
 %%% @author Evgeny Khramtsov <ekhramtsov@process-one.net>
-%%% @copyright (C) 2015, Evgeny Khramtsov
+%%% @copyright (C) 2015-2016, Evgeny Khramtsov
 %%% @doc
 %%%
 %%% @end
@@ -131,7 +131,8 @@ get_sessions(LUser, LServer) ->
 	    []
     end.
 
--spec get_sessions(binary(), binary(), binary()) -> [#session{}].
+-spec get_sessions(binary(), binary(), binary()) ->
+    [#session{}].
 get_sessions(LUser, LServer, LResource) ->
     USKey = us_to_key({LUser, LServer}),
     case eredis:q(?PROCNAME, ["HGETALL", USKey]) of

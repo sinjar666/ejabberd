@@ -5,7 +5,7 @@
 %%% Created : 31 Jan 2003 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2015   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -35,6 +35,9 @@
 -include("logger.hrl").
 
 start() ->
+    file:delete(ejabberd_odbc:freetds_config()),
+    file:delete(ejabberd_odbc:odbc_config()),
+    file:delete(ejabberd_odbc:odbcinst_config()),
     case lists:any(fun(H) -> needs_odbc(H) /= false end,
                    ?MYHOSTS) of
         true ->
@@ -72,16 +75,18 @@ start_odbc(Host, App) ->
 
 %% Returns {true, App} if we have configured odbc for the given host
 needs_odbc(Host) ->
-    LHost = jlib:nameprep(Host),
+    LHost = jid:nameprep(Host),
     case ejabberd_config:get_option({odbc_type, LHost},
                                     fun(mysql) -> mysql;
                                        (pgsql) -> pgsql;
                                        (sqlite) -> sqlite;
+				       (mssql) -> mssql;
                                        (odbc) -> odbc
                                     end, undefined) of
         mysql -> {true, p1_mysql};
         pgsql -> {true, p1_pgsql};
         sqlite -> {true, sqlite3};
+	mssql -> {true, odbc};
         odbc -> {true, odbc};
         undefined -> false
     end.
@@ -90,6 +95,7 @@ opt_type(odbc_type) ->
     fun (mysql) -> mysql;
 	(pgsql) -> pgsql;
 	(sqlite) -> sqlite;
+	(mssql) -> mssql;
 	(odbc) -> odbc
     end;
 opt_type(_) -> [odbc_type].

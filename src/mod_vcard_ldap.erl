@@ -5,7 +5,7 @@
 %%% Created :  2 Jan 2003 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2015   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -55,7 +55,7 @@
 	{serverhost = <<"">>        :: binary(),
          myhost = <<"">>            :: binary(),
          eldap_id = <<"">>          :: binary(),
-         search = true              :: boolean(),
+         search = false             :: boolean(),
          servers = []               :: [binary()],
          backups = []               :: [binary()],
 	 port = ?LDAP_PORT          :: inet:port_number(),
@@ -223,7 +223,7 @@ process_local_iq(_From, _To,
 					    [{xmlcdata,
 					      <<(translate:translate(Lang,
 								     <<"Erlang Jabber Server">>))/binary,
-						"\nCopyright (c) 2002-2015 ProcessOne">>}]},
+						"\nCopyright (c) 2002-2016 ProcessOne">>}]},
 				 #xmlel{name = <<"BDAY">>, attrs = [],
 					children =
 					    [{xmlcdata, <<"2002-11-16">>}]}]}]}
@@ -422,7 +422,7 @@ ldap_attribute_to_vcard(_, _) -> none.
 				[{xmlcdata,
 				  <<(translate:translate(Lang,
 							 <<"Search users in ">>))/binary,
-				    (jlib:jid_to_string(JID))/binary>>}]},
+				    (jid:to_string(JID))/binary>>}]},
 		     #xmlel{name = <<"instructions">>, attrs = [],
 			    children =
 				[{xmlcdata,
@@ -584,7 +584,7 @@ iq_get_vcard(Lang) ->
 		[{xmlcdata,
 		  <<(translate:translate(Lang,
 					 <<"ejabberd vCard module">>))/binary,
-		    "\nCopyright (c) 2003-2015 ProcessOne">>}]}].
+		    "\nCopyright (c) 2003-2016 ProcessOne">>}]}].
 
 -define(LFIELD(Label, Var),
 	#xmlel{name = <<"field">>,
@@ -600,7 +600,7 @@ search_result(Lang, JID, State, Data) ->
 			 [{xmlcdata,
 			   <<(translate:translate(Lang,
 						  <<"Search Results for ">>))/binary,
-			     (jlib:jid_to_string(JID))/binary>>}]},
+			     (jid:to_string(JID))/binary>>}]},
 	      #xmlel{name = <<"reported">>, attrs = [],
 		     children =
 			 [?TLFIELD(<<"text-single">>, <<"Jabber ID">>,
@@ -735,7 +735,7 @@ parse_options(Host, Opts) ->
 				  <<"vjud.@HOST@">>),
     Search = gen_mod:get_opt(search, Opts,
                              fun(B) when is_boolean(B) -> B end,
-                             true),
+                             false),
     Matches = gen_mod:get_opt(matches, Opts,
                               fun(infinity) -> 0;
                                  (I) when is_integer(I), I>0 -> I

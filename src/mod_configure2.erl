@@ -5,7 +5,7 @@
 %%% Created : 26 Oct 2003 by Alexey Shchepin <alexey@process-one.net>
 %%%
 %%%
-%%% ejabberd, Copyright (C) 2002-2015   ProcessOne
+%%% ejabberd, Copyright (C) 2002-2016   ProcessOne
 %%%
 %%% This program is free software; you can redistribute it and/or
 %%% modify it under the terms of the GNU General Public License as
@@ -186,8 +186,7 @@ process_get(#xmlel{name = <<"last">>, attrs = Attrs}) ->
       {'EXIT', _Reason} ->
 	  {error, ?ERR_INTERNAL_SERVER_ERROR};
       Vals ->
-	  {MegaSecs, Secs, _MicroSecs} = now(),
-	  TimeStamp = MegaSecs * 1000000 + Secs,
+	  TimeStamp = p1_time_compat:system_time(seconds),
 	  Str = list_to_binary(
                   [[jlib:integer_to_binary(TimeStamp - V),
                     <<" ">>] || V <- Vals]),
